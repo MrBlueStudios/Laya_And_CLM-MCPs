@@ -1,0 +1,150 @@
+"""Argument validation and answer decoding. No checkpoint needed."""
+
+import pytest
+
+from laya_mcp_server.questions import (
+    BOOL_LABELS,
+    DEFAULT_SCORE_LEVELS,
+    QUESTION_ID,
+    DecisionInputError,
+    build_request,
+    decode_answer,
+    parse_state,
+    validate_model,
+)
+
+
+def test_choice_from_label_list():
+    request = build_request("text", "choice", "Which team?", ["billing", "technical"])
+    assert request.question == {
+        "type": "choice",
+        "instructions": "Which team?",
+        "criteria": {"billing": None, "technical": None},
+    }
+    assert request.labels == ("billing", "technical")
+    assert request.questions == {QUESTION_ID: request.question}
+
+
+def test_choice_from_label_descriptions():
+    request = build_request("text", "choice", "Which team?", {"billing": "refunds ", "other": ""})
+    assert request.question["criteria"] == {"billing": "refunds", "other": None}
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        (None, "choice needs options"),
+        (["only"], "at least 2 options"),
+        (["a", "a"], "must be unique"),
+        (["a", " "], "non-empty string"),
+        ("a,b", "list of strings"),
+    ],
+)
+def test_choice_rejects_bad_options(options, message):
+    with pytest.raises(DecisionInputError, match=message):
+        build_request("text", "choice", "Which?", options)
+
+
+def test_many_choice_options_warn():
+    request = build_request("text", "choice", "Which?", ["o%d" % i for i in range(25)])
+    assert any("25 options" in note for note in request.notes)
+
+
+def test_score_uses_rubric_in_order():
+    request = build_request("text", "score", "How urgent?", ["low", "high"])
+    assert request.question == {"type": "score", "instructions": "How urgent?", "criteria": ["low", "high"]}
+    assert request.labels == ("low", "high")
+
+
+def test_score_defaults_rubric_and_says_so():
+    request = build_request("text", "score", "How urgent?")
+    assert request.labels == DEFAULT_SCORE_LEVELS
+    assert request.notes and "default rubric" in request.notes[0]
+
+
+def test_score_rejects_label_descriptions():
+    with pytest.raises(DecisionInputError, match="rubric levels"):
+        build_request("text", "score", "How urgent?", {"low": "x", "high": "y"})
+
+
+def test_bool_maps_to_noul_with_neutral_labels():
+    request = build_request("text", "bool", "Is it positive?")
+    assert request.question == {
+        "type": "noul",
+        "instructions": "Is it positive?",
+        "criteria": {"true": "yes", "false": "no"},
+        "labels": BOOL_LABELS,
+    }
+    assert request.labels == ("true", "false")
+
+
+def test_bool_takes_yes_no_descriptions():
+    request = build_request("text", "bool", "Positive?", ["yes, it is positive", "no, it is negative"])
+    assert request.question["criteria"] == {"true": "yes, it is positive", "false": "no, it is negative"}
+
+
+def test_bool_rejects_wrong_option_count():
+    with pytest.raises(DecisionInputError, match="yes_description, no_description"):
+        build_request("text", "bool", "Positive?", ["yes"])
+
+
+@pytest.mark.parametrize("instructions", ["", "   ", None, 3])
+def test_instructions_required(instructions):
+    with pytest.raises(DecisionInputError, match="instructions"):
+        build_request("text", "bool", instructions)
+
+
+def test_unknown_question_type():
+    with pytest.raises(DecisionInputError, match="question_type"):
+        build_request("text", "maybe", "Q?")
+
+
+def test_state_json_string_is_parsed():
+    assert parse_state('{"subject": "hi", "body": "there"}') == {"subject": "hi", "body": "there"}
+    assert parse_state('[{"role": "user", "content": "hi"}]') == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1, 2", "{}", "plain text", " 42 "])
+def test_state_other_text_is_kept(text):
+    assert parse_state(text) == text
+
+
+@pytest.mark.parametrize("state", ["", "  ", {}, [], None, 7])
+def test_state_rejects_empty_or_scalar(state):
+    with pytest.raises(DecisionInputError, match="state"):
+        parse_state(state)
+
+
+def test_validate_model():
+    assert validate_model(None) == "auto"
+    assert validate_model("multilingual") == "multilingual"
+    with pytest.raises(DecisionInputError, match="model"):
+        validate_model("gpt")
+
+
+def _answer(**fields):
+    return {"answer_confidence": 0.7, **fields}
+
+
+def test_decode_choice():
+    request = build_request("t", "choice", "Which?", ["a", "b"])
+    out = decode_answer(request, _answer(choice="b", probabilities={"a": 0.3, "b": 0.7}))
+    assert out == {"answer": "b", "probabilities": {"a": 0.3, "b": 0.7}, "confidence": 0.7}
+
+
+def test_decode_score_keys_by_level_text():
+    request = build_request("t", "score", "How?", ["low", "mid", "high"])
+    raw = _answer(score=1.5, probabilities={"0": 0.1, "1": 0.3, "2": 0.6})
+    out = decode_answer(request, raw)
+    assert out["probabilities"] == {"low": 0.1, "mid": 0.3, "high": 0.6}
+    assert out["answer"] == "high"
+    assert out["expected_score"] == 1.5
+    assert out["expected_score_normalized"] == 0.75
+
+
+def test_decode_bool():
+    request = build_request("t", "bool", "Yes?")
+    out = decode_answer(request, _answer(noul=0.25))
+    assert out["probabilities"] == {"true": 0.25, "false": 0.75}
+    assert out["answer"] == "false"
+    assert out["probability_true"] == 0.25

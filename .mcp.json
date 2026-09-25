@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "laya-mcp-server": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PROJECT_DIR:-.}/laya-mcp-server",
+        "--frozen",
+        "--quiet",
+        "laya-decision-mcp"
+      ],
+      "env": {
+        "LAYA_MCP_MODEL": "auto",
+        "LAYA_MCP_PRELOAD": "english"
+      }
+    }
+  }
+}
