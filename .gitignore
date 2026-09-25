@@ -1,0 +1,7 @@
+# Each of these has its own jj/git repo — do not track their contents
+# from this top-level Projects repo.
+/3d-projects/
+/Roblox-Games/
+/Blitsol/
+/ZEN_Projects/
+/Music/
