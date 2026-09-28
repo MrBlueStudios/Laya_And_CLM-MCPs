@@ -66,3 +66,9 @@ def test_plain_descriptions_route_tools(live):
              "Send an email to a contact.", "Add an event to the calendar."]
     result = live.rank("Book a table for two at an Italian place tonight", tools)
     assert result["ranking"][0]["index"] == 1
+
+
+def test_state_is_the_situation_not_a_description(live):
+    candidates = ["Lava flows from a volcano.", "Snow falls in winter."]
+    result = live.rank("The volcano erupted last night and lava reached the village.", candidates)
+    assert result["ranking"][0]["index"] == 0

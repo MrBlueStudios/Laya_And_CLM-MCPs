@@ -98,6 +98,12 @@ Measured in a 4-vCPU Xeon container (28 September 2026):
   Moon" (card: 0.993), and the billing ticket was routed to billing at 0.990 (card: 0.939). So the
   decisions match, while the probabilities differ by a few points. Nothing more was compared,
   because there was no GPU to run the bf16 reference.
+- **Load.** A single call with hundreds of new candidates can keep a CPU backend busy for
+  minutes, and the backend keeps computing after the client's timeout. On a shared CPU backend,
+  keep candidate lists short or reuse the same ones, so they come from the cache.
+- **Exposure.** The script binds 127.0.0.1. It only accepts JSON requests addressed to
+  127.0.0.1/localhost (so a web page can't make your browser send it work), with at most 256 texts
+  per request and a 30 s read timeout.
 - **Memory.** ~9 GB of RAM for the Q8_0 GGUF. A build of llama.cpp with Vulkan or SYCL can use an
   Intel Arc GPU instead.
 
@@ -154,6 +160,15 @@ So write every option as a short sentence describing that answer, keep candidate
 and map indices back to your own IDs. Adding `instructions` helped in some tests and hurt in
 others, so test both ways on your own data.
 
+The state matters the same way. It should *be* the situation or question, not a description of
+it. With the candidates "Lava flows from a volcano." and "Snow falls in winter.":
+
+| state | result |
+|---|---|
+| "The volcano erupted last night and lava reached the village." | lava first, 0.999 |
+| "What happens when a volcano erupts?" | lava first, 0.996 |
+| "A brand new sentence about volcanoes erupting" (a description of a text) | snow first, 0.72 (wrong) |
+
 ### What the numbers mean
 
 - **Relative, not calibrated.** CLM always ranks something first, even if nothing fits, so its
@@ -184,9 +199,14 @@ If the configuration is invalid, the server still starts, and every tool call (a
   requests go.
 - Redirects are never followed, so the key can't be forwarded to another address.
 - Plain http is refused except to this machine; credentials in the URL are refused.
-- Responses are capped at 8 MB. Answers are validated (exactly the requested options, finite
-  probabilities in [0, 1] that sum to 1). The output carries only numbers and your own strings: the
-  answer label is recomputed from the distribution, never copied from the server.
+- Responses are capped at 8 MB and requested uncompressed, and `CLM_TIMEOUT` bounds the whole
+  request, not just each read. Answers are validated (exactly the requested options, finite
+  probabilities in [0, 1] that sum to 1). The answer label is recomputed from the distribution,
+  never copied from the server.
+- Backend text reaches tool output in two places only: the error message of a 422 or 502, which
+  is quoted and labelled "Server message (untrusted, quoted)", and model names in
+  `clm_server_status`, which must match the model-name pattern. Other errors carry no server
+  text.
 - Inputs are bounded (100,000-character state, 1,000 candidates, 1 MB of candidate text), and model
   names must match `[A-Za-z0-9._-]`.
 - The API key never appears in tool output, status or error messages.
@@ -195,7 +215,7 @@ If the configuration is invalid, the server still starts, and every tool call (a
 
 ```bash
 cd clm-mcp-server
-uv run --frozen pytest                    # 93 tests against a fake clm-serve over real HTTP, ~15 s
+uv run --frozen pytest                    # 103 tests against a fake clm-serve over real HTTP, ~20 s
 CLM_TEST_URL=http://127.0.0.1:8700 CLM_TEST_API_KEY=... uv run --frozen pytest -m live   # a real backend
 ```
 
@@ -203,7 +223,7 @@ CLM_TEST_URL=http://127.0.0.1:8700 CLM_TEST_API_KEY=... uv run --frozen pytest -
 |---|---|
 | `test_questions.py` | validation and limits, and decoding: bad distributions are rejected, labels come from the request |
 | `test_settings.py` | the URL policy (loopback-only http, no credentials in URLs), key handling, value ranges |
-| `test_backend.py` | the auth header, 401/422/502/500 handling, redirects not followed (the key never reaches the other host), timeouts, size caps, non-JSON bodies |
+| `test_backend.py` | the auth header, 401/422/502/500 handling, redirects not followed (the key never reaches the other host), proxy variables never seeing local traffic, whole-request timeouts against a trickling server, size caps, non-JSON bodies, quoting of backend text |
 | `test_tool.py` | the three tools over an in-process MCP client, readable errors, the misconfigured and unreachable states |
 | `test_stdio.py` | launching from `.mcp.json` like Claude Code, with the key coming from the environment |
 | `test_live.py` | the model card's examples and the phrasing findings above, against a real CLM |

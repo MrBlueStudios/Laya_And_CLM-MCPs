@@ -56,3 +56,7 @@ def test_api_key_handling():
 def test_bad_values(env, message):
     with pytest.raises(CLMConfigError, match=message):
         CLMSettings.from_env(env)
+
+
+def test_scheme_case_does_not_turn_tls_off():
+    assert CLMSettings.from_env({"CLM_BASE_URL": "HTTPS://gpu.example.com"}).uses_tls

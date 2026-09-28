@@ -30,6 +30,7 @@ from .backend import (
     CLMBackendError,
     CLMConfigError,
     CLMRequestRejected,
+    MODEL_NAME,
     CLMSettings,
     validate_model_name,
 )
@@ -60,6 +61,10 @@ the same shape as evaluate_laya_decision.
 CLM's probabilities are relative to the candidates you give it and are not calibrated: it always \
 ranks something first, even if nothing fits. For an absolute yes/no ("is any passage relevant?") \
 or calibrated triage of a few labels, prefer the Laya tools. English only.
+
+Pass the situation or question itself as `state` ("The volcano erupted last night..."), never a \
+description of it ("a text about volcanoes"): CLM matches states to answers, and a description of \
+a text can rank the wrong candidate first.
 """
 
 EVALUATE_DESCRIPTION = """\
@@ -236,10 +241,12 @@ class CLMService:
             "cache_hit_rate": _cache_hit_rate(health.get("cache")),
         }
         try:
-            models = self._backend.models().body
-            names = [m.get("name") for m in models.get("models", []) if isinstance(m, dict)]
-            out["models"] = [n for n in names if isinstance(n, str) and len(n) <= 64][:20]
-        except (CLMBackendError, AttributeError) as exc:
+            listed = self._backend.models().body
+            listed = listed.get("models") if isinstance(listed, dict) else None
+            names = [m.get("name") for m in listed if isinstance(m, dict)] if isinstance(listed, list) else []
+            # Only names that pass the same check as the `model` argument reach the output.
+            out["models"] = [n for n in names if isinstance(n, str) and MODEL_NAME.match(n)][:20]
+        except CLMBackendError as exc:
             out["models_error"] = str(exc)
         return out
 
@@ -257,7 +264,13 @@ def _usage(body: Any) -> dict[str, int]:
 
 def _cache_hit_rate(cache: Any) -> float | None:
     rate = cache.get("hit_rate") if isinstance(cache, dict) else None
-    return round(float(rate), 3) if isinstance(rate, (int, float)) and not isinstance(rate, bool) else None
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return None
+    try:
+        rate = float(rate)
+    except OverflowError:
+        return None
+    return round(rate, 3) if 0.0 <= rate <= 1.0 else None
 
 
 def _tool_errors(fn):

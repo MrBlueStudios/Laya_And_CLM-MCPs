@@ -25,12 +25,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 MAX_BODY_BYTES = 16 * 1024 * 1024
+MAX_TEXTS = 256            # clm-serve sends batches of 32
+MAX_TEXT_CHARS = 64_000    # well past 2,048 tokens; the rest would be truncated anyway
+READ_TIMEOUT_S = 30
 
 
 def build_handler(llm, model_name: str, max_tokens: int):
     lock = threading.Lock()  # one llama.cpp context: embed one request at a time
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = READ_TIMEOUT_S  # a client that stops sending mid-request is dropped
+
         def _send(self, status: int, payload: dict) -> None:
             body = json.dumps(payload).encode("utf-8")
             self.send_response(status)
@@ -52,7 +57,18 @@ def build_handler(llm, model_name: str, max_tokens: int):
             if self.path.rstrip("/") != "/v1/embeddings":
                 self._send(404, {"error": "not found"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
+            # Browsers can POST text/plain to localhost from any page, but can't set JSON content
+            # types or a foreign Host without a preflight this server never answers.
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+            content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if host not in ("127.0.0.1", "localhost") or content_type != "application/json":
+                self._send(403, {"error": "local JSON requests only"})
+                return
+            raw_length = self.headers.get("Content-Length") or ""
+            if not raw_length.isdigit():
+                self._send(411, {"error": "Content-Length required"})
+                return
+            length = int(raw_length)
             if length > MAX_BODY_BYTES:
                 self._send(413, {"error": "request too large"})
                 return
@@ -60,10 +76,12 @@ def build_handler(llm, model_name: str, max_tokens: int):
                 body = json.loads(self.rfile.read(length))
                 texts = body["input"]
                 texts = [texts] if isinstance(texts, str) else list(texts)
-                if not all(isinstance(t, str) for t in texts):
-                    raise ValueError("input must be strings")
-            except (ValueError, KeyError, TypeError) as exc:
-                self._send(400, {"error": str(exc)})
+                if not all(isinstance(t, str) and len(t) <= MAX_TEXT_CHARS for t in texts):
+                    raise ValueError("input must be strings of at most %d characters" % MAX_TEXT_CHARS)
+                if not 1 <= len(texts) <= MAX_TEXTS:
+                    raise ValueError("send 1 to %d texts per request" % MAX_TEXTS)
+            except (ValueError, KeyError, TypeError, RecursionError) as exc:
+                self._send(400, {"error": str(exc)[:200]})
                 return
             use_b64 = body.get("encoding_format") == "base64"
             data, tokens = [], 0

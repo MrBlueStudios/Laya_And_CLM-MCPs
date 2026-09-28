@@ -139,6 +139,16 @@ class FakeCLM:
                 if b.get("status"):
                     self._send(b["status"], {"detail": b.get("detail", "forced failure")})
                     return True
+                if b.get("drip"):
+                    # Headers at once, then one byte every 0.3 s: each read is quick, the whole slow.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    for _ in range(100):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.3)
+                    return True
                 if b.get("oversize"):
                     self._send(200, b"[" + b"0," * (5 * 1024 * 1024) + b"0]")
                     return True
@@ -161,7 +171,9 @@ class FakeCLM:
                                      "cache": {"hit_rate": 0.5}})
                 elif self.path == "/v1/models":
                     if self._authorised():
-                        self._send(200, {"models": [{"name": m, "description": "", "release_date": ""} for m in MODELS]})
+                        listed = fake.behaviour.get("models_body")
+                        self._send(200, listed if listed is not None else
+                                   {"models": [{"name": m, "description": "", "release_date": ""} for m in MODELS]})
                 else:
                     self._send(404, {"detail": "Not Found"})
 

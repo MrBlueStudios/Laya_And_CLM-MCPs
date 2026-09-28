@@ -74,7 +74,7 @@ enumerate. In those cases, use an LLM, and let the decision model sit around it.
 | Context | 512 tokens English, 1,024 (up to 8,192) multilingual | 2,048 by default, up to 8,192 with more GPU memory | Not stated |
 | Languages | English, plus 100+ via the multilingual checkpoint (Dutch works, see below) | English-trained heads | Not stated |
 | Calibration | Trained with proper scoring rules (RLCD) plus fitted temperatures per question type; ECE 0.081 after temperature fitting | Probabilities are relative to the candidate set; temperature defaults to 1, no calibration claimed | Claims calibration (RLCD), no ECE published |
-| Hardware | CPU works (90–290 ms measured here); GPU ~33–40 ms (T4) | GPU needed for the Qwen3-8B encoder (benchmarked on RTX 4090 and H100) | None, it's hosted |
+| Hardware | CPU works (90–290 ms measured here); GPU ~33–40 ms (T4) | GPU for the Qwen3-8B encoder (benchmarked on RTX 4090 and H100); a llama.cpp CPU path works for experiments (~1 s per 30 new tokens, cached texts in ms; see clm-mcp-server) | None, it's hosted |
 | Latency | 32.8–39.5 ms per question on a T4 | ~28 ms per new state on an RTX 4090; 0.6–2 ms when the state is cached | 70–500 ms end to end (236–276 ms p50 measured by third parties) |
 | Fine-tuning | Full fine-tune notebook (Kaggle, 2× T4); 0.362 → 0.766 on the typed-decisions benchmark | Only the heads train, so it is cheap; their SOTA verifier results come from fine-tuned heads | Not available |
 | Strongest at | Small typed questions, triage, moderation, guardrails, multilingual, CPU-only hosts | Tool/action selection, reranking, best-of-N verification, agents that revisit states | Hosted, many-option, general decisions |

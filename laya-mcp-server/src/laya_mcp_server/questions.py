@@ -6,6 +6,7 @@ Pure Python (no torch), so every validation rule is testable without loading a c
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Literal, Union
 
@@ -61,6 +62,10 @@ class DecisionRequest:
         return {QUESTION_ID: self.question}
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError("%s is not valid JSON" % name)
+
+
 def parse_state(state: Any) -> State:
     """Accept text, a JSON object/array, or a string holding one.
 
@@ -76,7 +81,7 @@ def parse_state(state: Any) -> State:
             raise DecisionInputError("state is %d characters; the limit is %d" % (len(state), MAX_STATE_CHARS))
         if text[0] in "{[":
             try:
-                parsed = json.loads(text)
+                parsed = json.loads(text, parse_constant=_reject_constant)
             except (ValueError, RecursionError):
                 return state
             if isinstance(parsed, (dict, list)) and parsed:
@@ -105,13 +110,18 @@ def _clean_labels(options: list[Any], what: str) -> list[str]:
         if len(option.strip()) > MAX_OPTION_CHARS:
             raise DecisionInputError("%s[%d] is longer than %d characters" % (what, i, MAX_OPTION_CHARS))
         labels.append(option.strip())
-    duplicates = sorted({label for label in labels if labels.count(label) > 1})
+    duplicates = sorted(label for label, n in Counter(labels).items() if n > 1)
     if duplicates:
         raise DecisionInputError("%s must be unique; repeated: %s" % (what, ", ".join(duplicates)))
     return labels
 
 
 def _choice_criteria(options: Any) -> dict[str, str | None]:
+    if isinstance(options, (dict, list)) and len(options) > MAX_OPTIONS:
+        # Checked before cleaning, so an oversized list costs nothing to reject.
+        raise DecisionInputError(
+            "choice takes at most %d options (Laya is accurate up to ~20); narrow the list first" % MAX_OPTIONS
+        )
     if options is None:
         raise DecisionInputError(
             "choice needs options: a list of labels, or an object mapping each label to a description"
@@ -170,6 +180,8 @@ def build_request(
             levels = list(DEFAULT_SCORE_LEVELS)
             notes.append("no options given; used the default rubric %s" % " < ".join(levels))
         elif isinstance(options, list):
+            if len(options) > MAX_SCORE_LEVELS:
+                raise DecisionInputError("score needs between 2 and %d rubric levels" % MAX_SCORE_LEVELS)
             levels = _clean_labels(options, "options")
         else:
             raise DecisionInputError("score options must be a list of rubric levels, lowest first")

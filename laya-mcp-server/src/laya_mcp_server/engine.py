@@ -187,21 +187,23 @@ class LayaEngine:
                 # the head token budget; those are the caller's to fix.
                 raise DecisionInputError(str(exc)) from exc
             latency_ms = (time.perf_counter() - started) * 1000.0
+            routing = result["routing"]
+            checkpoint = routing["model"]
+            # Read the agent while holding the lock: another call could otherwise load a third
+            # checkpoint and evict this one before we look at its config.
+            agent = self.agent(checkpoint)
+            calibration = self._calibration(agent, request)
+            max_len = agent.cfg.get("max_len", 512) if agent is not None else None
+            device = agent.device.type if agent is not None else None
 
-        routing = result["routing"]
-        checkpoint = routing["model"]
         answer = result["answers"][next(iter(request.questions))]
         usage = result.get("usage", {})
-        agent = self.agent(checkpoint)
-
-        calibration = self._calibration(agent, request)
         warnings = list(request.notes)
         if calibration is not None and not calibration["calibrated"]:
             warnings.append(
                 "this checkpoint ships no usable temperature for %s questions, so their probabilities "
                 "are not calibrated; do not gate on `confidence`" % calibration["bucket"]
             )
-        max_len = agent.cfg.get("max_len", 512) if agent is not None else None
         if max_len and usage.get("input_tokens", 0) >= max_len:
             warnings.append(
                 "the request filled the %s checkpoint's %d-token window, so part of the state was "
@@ -213,7 +215,7 @@ class LayaEngine:
             "question_type": request.question_type,
             "model": checkpoint,
             "routing_reason": routing.get("reason"),
-            "device": agent.device.type if agent is not None else None,
+            "device": device,
             "calibration": calibration,
             "latency_ms": round(latency_ms, 1),
             "input_tokens": int(usage.get("input_tokens", 0)),

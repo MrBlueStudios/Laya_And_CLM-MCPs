@@ -182,3 +182,8 @@ def test_ranking_previews_are_truncated():
     out = decode_ranking(request, answers({"type": "choice", "probabilities": {"0": 0.7, "1": 0.3}}))
     assert len(out["ranking"][0]["candidate_preview"]) == 200
     assert json.dumps(out)  # plain JSON-serialisable
+
+
+@pytest.mark.parametrize("text", ["[NaN]", '{"x": Infinity}'])
+def test_non_json_constants_stay_text(text):
+    assert parse_state(text) == text

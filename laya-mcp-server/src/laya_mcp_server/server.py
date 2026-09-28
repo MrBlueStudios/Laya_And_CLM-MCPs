@@ -10,6 +10,7 @@ Environment:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -178,14 +179,17 @@ def _laya_version() -> str | None:
 
 def _prefetch(engine: LayaEngine) -> None:
     """Download and warm the preload checkpoints, answer one sample decision, and print it."""
-    seconds = engine.warm_up()
+    # laya prints warnings to stdout; keep stdout for the JSON result alone.
+    with contextlib.redirect_stdout(sys.stderr):
+        seconds = engine.warm_up()
     request = build_request(
         {"subject": "Duplicate charge", "body": "We were billed twice for March. Please refund the duplicate."},
         "choice",
         "Which team should handle this?",
         {"billing": "invoices, payments, refunds", "technical": "bugs, outages", "other": "everything else"},
     )
-    result = engine.evaluate(request)
+    with contextlib.redirect_stdout(sys.stderr):
+        result = engine.evaluate(request)
     print("warmed %s in %.1fs" % (", ".join(engine.preload) or "nothing", seconds), file=sys.stderr)
     print(json.dumps(result, indent=2))
 

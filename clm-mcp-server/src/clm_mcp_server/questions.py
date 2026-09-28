@@ -76,6 +76,10 @@ class RankRequest:
         return {QUESTION_ID: {"type": "choice", "instructions": self.instructions, "criteria": criteria}}
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError("%s is not valid JSON" % name)
+
+
 def parse_state(state: Any) -> State:
     """Accept text, a JSON object/array, or a string holding one.
 
@@ -90,7 +94,7 @@ def parse_state(state: Any) -> State:
             raise DecisionInputError("state is %d characters; the limit is %d" % (len(state), MAX_STATE_CHARS))
         if text[0] in "{[":
             try:
-                parsed = json.loads(text)
+                parsed = json.loads(text, parse_constant=_reject_constant)
             except (ValueError, RecursionError):
                 return state
             if isinstance(parsed, (dict, list)) and parsed:
@@ -151,6 +155,10 @@ def _choice_criteria(options: Any) -> dict[str, str | None]:
         raise DecisionInputError(
             "choice needs options: a list of labels, or an object mapping each label to a description"
         )
+    if isinstance(options, (dict, list)) and len(options) > MAX_CHOICE_OPTIONS:
+        raise DecisionInputError(
+            "choice takes at most %d options; use rank_clm_candidates for longer lists" % MAX_CHOICE_OPTIONS
+        )
     if isinstance(options, dict):
         labels = _clean_texts(list(options.keys()), "options keys", MAX_OPTION_CHARS)
         # Keys that differ only in surrounding spaces would merge once stripped.
@@ -199,6 +207,8 @@ def build_request(state: Any, question_type: Any, instructions: Any, options: An
             levels = list(DEFAULT_SCORE_LEVELS)
             notes.append("no options given; used the default rubric %s" % " < ".join(levels))
         elif isinstance(options, list):
+            if len(options) > MAX_SCORE_LEVELS:
+                raise DecisionInputError("score needs between 2 and %d rubric levels" % MAX_SCORE_LEVELS)
             levels = _clean_texts(options, "options", MAX_OPTION_CHARS)
         else:
             raise DecisionInputError("score options must be a list of rubric levels, lowest first")

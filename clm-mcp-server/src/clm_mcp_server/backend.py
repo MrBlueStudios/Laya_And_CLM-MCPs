@@ -75,7 +75,7 @@ class CLMSettings:
 
     @property
     def uses_tls(self) -> bool:
-        return self.base_url.startswith("https://")
+        return urlsplit(self.base_url).scheme == "https"
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> CLMSettings:
@@ -143,7 +143,9 @@ class CLMBackend:
 
     def __init__(self, settings: CLMSettings, transport: httpx.BaseTransport | None = None):
         self.settings = settings
-        headers = {"Accept": "application/json", "User-Agent": "clm-mcp-server/%s" % __version__}
+        # identity: a compressed body could inflate far beyond its declared size in one chunk.
+        headers = {"Accept": "application/json", "Accept-Encoding": "identity",
+                   "User-Agent": "clm-mcp-server/%s" % __version__}
         if settings.api_key:
             headers["Authorization"] = "Bearer %s" % settings.api_key
         self._client = httpx.Client(
@@ -181,9 +183,9 @@ class CLMBackend:
         started = time.perf_counter()
         try:
             with self._client.stream(method, path, json=body) as response:
-                raw = _read_capped(response)
+                raw = _read_capped(response, started + self.settings.timeout_s)
                 status, headers = response.status_code, response.headers
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, _DeadlinePassed) as exc:
             raise CLMBackendError(
                 "the CLM server at %s did not answer within %gs (CLM_TIMEOUT)" % (where, self.settings.timeout_s)
             ) from exc
@@ -205,13 +207,13 @@ class CLMBackend:
                 "started with." % (where, status)
             )
         if status == 422:
-            raise CLMRequestRejected("the CLM server rejected the request: %s" % _detail(raw))
+            raise CLMRequestRejected("the CLM server rejected the request (422). %s" % _detail(raw))
         if status == 502:
             raise CLMBackendError(
-                "the CLM server's encoder (vLLM or llama.cpp) failed or is unreachable: %s" % _detail(raw)
+                "the CLM server's encoder (vLLM or llama.cpp) failed or is unreachable (502). %s" % _detail(raw)
             )
         if status != 200:
-            raise CLMBackendError("the CLM server returned HTTP %d: %s" % (status, _detail(raw)))
+            raise CLMBackendError("the CLM server returned HTTP %d; see clm-serve's log for details" % status)
         try:
             parsed = json.loads(raw)
         except (ValueError, RecursionError) as exc:
@@ -219,12 +221,18 @@ class CLMBackend:
         return CLMResponse(body=parsed, server_ms=_latency_header(headers), round_trip_ms=round_trip_ms)
 
 
-def _read_capped(response: httpx.Response) -> bytes:
+class _DeadlinePassed(Exception):
+    """The whole request took longer than CLM_TIMEOUT (httpx only bounds each read)."""
+
+
+def _read_capped(response: httpx.Response, deadline: float) -> bytes:
     declared = response.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
         raise CLMBackendError("the CLM server's response is %s bytes; the limit is %d" % (declared, MAX_RESPONSE_BYTES))
     chunks, size = [], 0
     for chunk in response.iter_bytes():
+        if time.perf_counter() > deadline:
+            raise _DeadlinePassed()
         size += len(chunk)
         if size > MAX_RESPONSE_BYTES:
             raise CLMBackendError("the CLM server's response exceeded %d bytes" % MAX_RESPONSE_BYTES)
@@ -243,7 +251,9 @@ def _detail(raw: bytes) -> str:
     except (ValueError, RecursionError):
         pass
     text = " ".join(text.split())
-    return text if len(text) <= MAX_DETAIL_CHARS else text[: MAX_DETAIL_CHARS - 1] + "…"
+    text = text if len(text) <= MAX_DETAIL_CHARS else text[: MAX_DETAIL_CHARS - 1] + "…"
+    # Quoted and labelled: this is the backend's text, not an instruction to anyone.
+    return "Server message (untrusted, quoted): %s" % json.dumps(text, ensure_ascii=False)
 
 
 def _latency_header(headers: httpx.Headers) -> float | None:

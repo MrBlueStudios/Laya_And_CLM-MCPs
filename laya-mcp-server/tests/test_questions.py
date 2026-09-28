@@ -179,3 +179,22 @@ def test_revision_is_validated_without_loading_anything():
     for bad in ["../../etc", "", "a b", "x" * 101]:
         with pytest.raises(ValueError, match="LAYA_MCP_REVISION"):
             LayaEngine(revision=bad)
+
+
+def test_oversized_option_lists_are_rejected_before_any_work():
+    import time
+
+    from laya_mcp_server.questions import MAX_OPTIONS
+
+    started = time.perf_counter()
+    for options in (["o%d" % i for i in range(50_000)], {"o%d" % i: "" for i in range(50_000)}):
+        with pytest.raises(DecisionInputError, match="at most %d options" % MAX_OPTIONS):
+            build_request("t", "choice", "Which?", options)
+    with pytest.raises(DecisionInputError, match="between 2 and 20"):
+        build_request("t", "score", "How?", ["l%d" % i for i in range(50_000)])
+    assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize("text", ["[NaN]", '{"x": Infinity}', "[-Infinity]"])
+def test_non_json_constants_stay_text(text):
+    assert parse_state(text) == text
