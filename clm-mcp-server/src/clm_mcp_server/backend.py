@@ -30,6 +30,7 @@ CONNECT_TIMEOUT_S = 5.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_DETAIL_CHARS = 300
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+API_KEY_CHARS = re.compile(r"^[\x21-\x7e]{1,512}$")
 
 
 class CLMConfigError(ValueError):
@@ -96,8 +97,8 @@ class CLMSettings:
             )
 
         api_key = environ.get("CLM_API_KEY", "").strip() or None
-        if api_key is not None and any(c in api_key for c in "\r\n"):
-            raise CLMConfigError("CLM_API_KEY must be a single line")
+        if api_key is not None and not API_KEY_CHARS.match(api_key):
+            raise CLMConfigError("CLM_API_KEY must be printable ASCII without spaces or line breaks")
 
         model = environ.get("CLM_MODEL", "").strip() or DEFAULT_MODEL
         try:
@@ -150,6 +151,10 @@ class CLMBackend:
             headers=headers,
             timeout=httpx.Timeout(settings.timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,
+            # With trust_env, httpx sends even 127.0.0.1 traffic through HTTP_PROXY / ALL_PROXY when
+            # NO_PROXY doesn't list it, handing the key and the decisions to the proxy in clear
+            # text. Proxy and CA settings from the environment only apply to https.
+            trust_env=settings.uses_tls,
             transport=transport,
         )
 

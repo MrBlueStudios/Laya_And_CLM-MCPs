@@ -49,6 +49,18 @@ def test_redirects_are_not_followed_so_the_key_stays_put(fake):
         assert elsewhere.requests == []
 
 
+def test_proxy_variables_never_see_local_traffic(fake, monkeypatch):
+    # A proxy in the environment must not receive the key or the decisions for a local server.
+    with FakeCLM() as proxy:
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, proxy.url)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        backend(fake.url).systemone("state", QUESTIONS)
+        assert proxy.requests == []
+    assert fake.requests[-1]["headers"]["Authorization"] == "Bearer %s" % API_KEY
+
+
 def test_unreachable_server():
     with socket.socket() as sock:  # a port nothing listens on
         sock.bind(("127.0.0.1", 0))

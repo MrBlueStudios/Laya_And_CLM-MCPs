@@ -505,6 +505,10 @@ so it can't replace that.
 
 ## 9. Getting started
 
+The step-by-step to-do list, with a research prompt for each project, is in
+[DECISION-MODELS-ROLLOUT.md](DECISION-MODELS-ROLLOUT.md). CLM's MCP server is
+[clm-mcp-server](clm-mcp-server/README.md).
+
 1. **Try it in Claude Code now.** This repository's `laya-mcp-server` gives Claude Code the
    `evaluate_laya_decision` tool (see `laya-mcp-server/README.md`). For Dutch text, pass
    `model: "multilingual"`.

@@ -32,6 +32,14 @@ DEFAULT_BOOL_CRITERIA = {"true": "yes", "false": "no"}
 # past ~20 options (Banking77: 0.425 at 77 labels).
 MANY_OPTIONS_WARNING_THRESHOLD = 20
 
+# Bounds on one call. Laya reads 512-1,024 tokens, so longer input only costs tokenising time;
+# the caps stop a runaway call from tying up the model.
+MAX_STATE_CHARS = 100_000
+MAX_INSTRUCTIONS_CHARS = 4_000
+MAX_OPTIONS = 64
+MAX_SCORE_LEVELS = 20
+MAX_OPTION_CHARS = 1_000
+
 
 class DecisionInputError(ValueError):
     """An argument the caller can fix. The message is safe to return to the model."""
@@ -64,10 +72,12 @@ def parse_state(state: Any) -> State:
         text = state.strip()
         if not text:
             raise DecisionInputError("state must not be empty")
+        if len(state) > MAX_STATE_CHARS:
+            raise DecisionInputError("state is %d characters; the limit is %d" % (len(state), MAX_STATE_CHARS))
         if text[0] in "{[":
             try:
                 parsed = json.loads(text)
-            except ValueError:
+            except (ValueError, RecursionError):
                 return state
             if isinstance(parsed, (dict, list)) and parsed:
                 return parsed
@@ -75,6 +85,12 @@ def parse_state(state: Any) -> State:
     if isinstance(state, (dict, list)):
         if not state:
             raise DecisionInputError("state must not be an empty object or array")
+        try:
+            size = len(json.dumps(state, ensure_ascii=False))
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise DecisionInputError("state is not serialisable as JSON: %s" % exc) from exc
+        if size > MAX_STATE_CHARS:
+            raise DecisionInputError("state is %d characters as JSON; the limit is %d" % (size, MAX_STATE_CHARS))
         return state
     raise DecisionInputError(
         "state must be text or a JSON object/array, got %s" % type(state).__name__
@@ -86,6 +102,8 @@ def _clean_labels(options: list[Any], what: str) -> list[str]:
     for i, option in enumerate(options):
         if not isinstance(option, str) or not option.strip():
             raise DecisionInputError("%s[%d] must be a non-empty string" % (what, i))
+        if len(option.strip()) > MAX_OPTION_CHARS:
+            raise DecisionInputError("%s[%d] is longer than %d characters" % (what, i, MAX_OPTION_CHARS))
         labels.append(option.strip())
     duplicates = sorted({label for label in labels if labels.count(label) > 1})
     if duplicates:
@@ -104,6 +122,8 @@ def _choice_criteria(options: Any) -> dict[str, str | None]:
         for label, description in zip(labels, options.values()):
             if description is not None and not isinstance(description, str):
                 raise DecisionInputError("options[%r] description must be a string" % label)
+            if description and len(description.strip()) > MAX_OPTION_CHARS:
+                raise DecisionInputError("options[%r] description is longer than %d characters" % (label, MAX_OPTION_CHARS))
             criteria[label] = description.strip() if description and description.strip() else None
     elif isinstance(options, list):
         criteria = {label: None for label in _clean_labels(options, "options")}
@@ -111,6 +131,10 @@ def _choice_criteria(options: Any) -> dict[str, str | None]:
         raise DecisionInputError("options must be a list of strings or an object of label -> description")
     if len(criteria) < 2:
         raise DecisionInputError("choice needs at least 2 options to form a distribution")
+    if len(criteria) > MAX_OPTIONS:
+        raise DecisionInputError(
+            "choice takes at most %d options (Laya is accurate up to ~20); narrow the list first" % MAX_OPTIONS
+        )
     return criteria
 
 
@@ -125,6 +149,10 @@ def build_request(
     if not isinstance(instructions, str) or not instructions.strip():
         raise DecisionInputError("instructions must be a non-empty string: the question to answer")
     instructions = instructions.strip()
+    if len(instructions) > MAX_INSTRUCTIONS_CHARS:
+        raise DecisionInputError(
+            "instructions are %d characters; the limit is %d" % (len(instructions), MAX_INSTRUCTIONS_CHARS)
+        )
     notes: list[str] = []
 
     if question_type == "choice":
@@ -145,8 +173,8 @@ def build_request(
             levels = _clean_labels(options, "options")
         else:
             raise DecisionInputError("score options must be a list of rubric levels, lowest first")
-        if len(levels) < 2:
-            raise DecisionInputError("score needs at least 2 rubric levels")
+        if not 2 <= len(levels) <= MAX_SCORE_LEVELS:
+            raise DecisionInputError("score needs between 2 and %d rubric levels" % MAX_SCORE_LEVELS)
         labels = tuple(levels)
         question = {"type": "score", "instructions": instructions, "criteria": levels}
     elif question_type == "bool":

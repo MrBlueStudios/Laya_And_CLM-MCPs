@@ -148,3 +148,34 @@ def test_decode_bool():
     assert out["probabilities"] == {"true": 0.25, "false": 0.75}
     assert out["answer"] == "false"
     assert out["probability_true"] == 0.25
+
+
+def test_input_limits():
+    from laya_mcp_server.questions import MAX_OPTIONS, MAX_STATE_CHARS
+
+    with pytest.raises(DecisionInputError, match="limit"):
+        parse_state("x" * (MAX_STATE_CHARS + 1))
+    with pytest.raises(DecisionInputError, match="limit"):
+        parse_state({"body": "x" * MAX_STATE_CHARS})
+    # Deeply nested "JSON" is kept as text instead of crashing the parser.
+    assert parse_state("[" * 50_000) == "[" * 50_000
+    with pytest.raises(DecisionInputError, match="instructions are"):
+        build_request("t", "bool", "q" * 4001)
+    with pytest.raises(DecisionInputError, match="at most %d options" % MAX_OPTIONS):
+        build_request("t", "choice", "Which?", ["o%d" % i for i in range(MAX_OPTIONS + 1)])
+    with pytest.raises(DecisionInputError, match="longer than"):
+        build_request("t", "choice", "Which?", ["a", "b" * 1001])
+    with pytest.raises(DecisionInputError, match="description is longer"):
+        build_request("t", "choice", "Which?", {"a": "x", "b": "y" * 1001})
+    with pytest.raises(DecisionInputError, match="between 2 and 20"):
+        build_request("t", "score", "How?", ["level %d" % i for i in range(21)])
+
+
+def test_revision_is_validated_without_loading_anything():
+    from laya_mcp_server.engine import PINNED_REVISION, LayaEngine
+
+    assert LayaEngine().revision == PINNED_REVISION
+    assert LayaEngine(revision="main").revision == "main"
+    for bad in ["../../etc", "", "a b", "x" * 101]:
+        with pytest.raises(ValueError, match="LAYA_MCP_REVISION"):
+            LayaEngine(revision=bad)

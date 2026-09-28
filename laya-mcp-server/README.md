@@ -28,7 +28,8 @@ doesn't have to wait for the download.
 ## Claude Code
 
 The repository root's [`.mcp.json`](../.mcp.json) registers the server, so Claude Code finds it
-whenever it starts in this repository:
+whenever it starts in this repository. To use it in *every* project, run
+[`../register-decision-mcps.sh`](../register-decision-mcps.sh) once (user scope):
 
 ```json
 {
@@ -97,9 +98,25 @@ Example result (`choice`):
 | `LAYA_MCP_MODEL` | `auto` | default checkpoint for calls that don't name one |
 | `LAYA_MCP_PRELOAD` | follows `LAYA_MCP_MODEL` (`auto` → `english`) | checkpoints to load at startup, comma separated, or `none` |
 | `HF_HUB_OFFLINE` | unset | set to `1` to run from the Hugging Face cache without network access |
+| `LAYA_MCP_REVISION` | `55cf4c4e…` (tested 25 Sept 2026) | Hugging Face revision of `convaiinnovations/laya` to load; `main` follows the latest |
 
 Memory: the English checkpoint holds 1.7 GB of fp32 weights (the process peaks at ~3.3 GB RSS
 while loading it). Multilingual holds about 1.3 GB.
+
+## Security
+
+- **Stdio only.** The server opens no network port. Its only network use is downloading the model
+  from Hugging Face.
+- **Pinned model.** Checkpoints are loaded from a fixed revision (`LAYA_MCP_REVISION`), so an update
+  upstream can't silently change the model a running tool uses. They are safetensors and JSON, read
+  without `trust_remote_code` or pickle. After `--prefetch`, `HF_HUB_OFFLINE=1` keeps it off the
+  network entirely.
+- **Bounded inputs.** Up to 100,000 characters of state, 4,000 of instructions, 64 options of
+  1,000 characters each, and 20 score levels. A string that looks like deeply nested JSON is
+  treated as text instead of crashing the parser.
+- **Stdout.** While serving, the MCP SDK points fd 1 at stderr, so `laya`'s own prints can't
+  corrupt the protocol (`test_stdio.py` checks this).
+- **Dependencies.** Pinned with hashes in `uv.lock`, and `.mcp.json` runs `uv run --frozen`.
 
 ## Latency
 
@@ -122,13 +139,13 @@ uv run --project laya-mcp-server --frozen python laya-mcp-server/scripts/benchma
 
 ```bash
 cd laya-mcp-server
-uv run --frozen pytest -m "not model"   # 35 validation tests, no model, < 1 s
+uv run --frozen pytest -m "not model"   # 37 validation tests, no model, a few seconds
 uv run --frozen pytest                   # everything, ~1 min on CPU (downloads the English checkpoint)
 ```
 
 | file | verifies |
 |---|---|
-| `test_questions.py` | argument validation, and how `choice`/`score`/`bool` map onto Laya questions |
+| `test_questions.py` | argument validation and input limits, the revision setting, and how `choice`/`score`/`bool` map onto Laya questions |
 | `test_tool.py` | the tool over an in-process MCP client: schema, a valid distribution for every type, sanity answers, JSON states, truncation and calibration warnings, errors |
 | `test_inference.py` | one forward pass per decision, `generate()` is never called, the model is an encoder with no LM head, and the probabilities equal `softmax(logits / T)` with the checkpoint's fitted `T` |
 | `test_latency.py` | p50 model time under a device budget: 50 ms on CUDA (the ~33 ms claim plus headroom), 500 ms on CPU; override with `LAYA_LATENCY_BUDGET_MS` |

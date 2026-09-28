@@ -41,8 +41,9 @@ def test_insecure_http_needs_an_explicit_opt_in():
 def test_api_key_handling():
     assert CLMSettings.from_env({"CLM_API_KEY": "  "}).api_key is None  # ${CLM_API_KEY:-} expands to ""
     assert CLMSettings.from_env({"CLM_API_KEY": " k "}).api_key == "k"
-    with pytest.raises(CLMConfigError, match="single line"):
-        CLMSettings.from_env({"CLM_API_KEY": "k\r\nX-Evil: 1"})
+    for bad in ["k\r\nX-Evil: 1", "has space", "sleutel-ü"]:
+        with pytest.raises(CLMConfigError, match="printable ASCII"):
+            CLMSettings.from_env({"CLM_API_KEY": bad})
 
 
 @pytest.mark.parametrize("env, message", [

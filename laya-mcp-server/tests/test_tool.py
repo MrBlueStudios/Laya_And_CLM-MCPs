@@ -145,4 +145,5 @@ async def test_status(client):
     status = result.structured_content
     assert status["state"] == "ready"
     assert "english" in status["loaded_checkpoints"]
+    assert status["revision"] == "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
     assert status["laya_version"]

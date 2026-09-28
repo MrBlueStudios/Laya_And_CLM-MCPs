@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -19,6 +20,15 @@ from .questions import (
 CHECKPOINTS = ("english", "multilingual", "typed-decisions")
 # Laya's own type names, keyed by the tool's question_type.
 LAYA_TYPES = {"choice": "choice", "score": "score", "bool": "noul"}
+
+# All three checkpoints live in one Hugging Face repo, the English one at its root.
+LAYA_REPO = "convaiinnovations/laya"
+SUBFOLDERS = {"english": None, "multilingual": "multilingual", "typed-decisions": "typed-decisions"}
+CHECKPOINT_FILES = ("rl_agent_config.json", "model.safetensors", "tokenizer/*", "encoder/*")
+# The revision this server was tested against (25 Sept 2026). Pinned, so a change upstream cannot
+# silently swap the weights under a running tool; LAYA_MCP_REVISION=main follows the latest.
+PINNED_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+REVISION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 
 
 def _checkpoint_list(raw: str) -> list[str]:
@@ -51,11 +61,16 @@ class LayaEngine:
         device: str | None = None,
         default_model: ModelName = "auto",
         preload: Sequence[str] | None = None,
+        revision: str = PINNED_REVISION,
     ):
         self.device = device
         self.default_model = validate_model(default_model)
         self.preload = list(preload) if preload is not None else default_preload(self.default_model)
+        if not REVISION_PATTERN.match(revision):
+            raise ValueError("LAYA_MCP_REVISION must be a commit hash, branch or tag, got %r" % revision)
+        self.revision = revision
         self._router: Any = None
+        self._fetched: set[str] = set()
         self._lock = threading.Lock()
         self._warming = False
         self._warm_error: str | None = None
@@ -63,12 +78,13 @@ class LayaEngine:
 
     @classmethod
     def from_env(cls) -> LayaEngine:
-        """LAYA_DEVICE (torch device, default auto), LAYA_MCP_MODEL, LAYA_MCP_PRELOAD (comma list)."""
+        """LAYA_DEVICE, LAYA_MCP_MODEL, LAYA_MCP_PRELOAD (comma list), LAYA_MCP_REVISION."""
         model = validate_model(os.environ.get("LAYA_MCP_MODEL", "").strip() or "auto")
         raw_preload = os.environ.get("LAYA_MCP_PRELOAD", "").strip()
         preload = _checkpoint_list(raw_preload) if raw_preload else None
         device = os.environ.get("LAYA_DEVICE", "").strip() or None
-        return cls(device=device, default_model=model, preload=preload)
+        revision = os.environ.get("LAYA_MCP_REVISION", "").strip() or PINNED_REVISION
+        return cls(device=device, default_model=model, preload=preload, revision=revision)
 
     def _router_locked(self) -> Any:
         if self._router is None:
@@ -76,6 +92,27 @@ class LayaEngine:
 
             self._router = Router(device=self.device)
         return self._router
+
+    def _fetch_locked(self, checkpoint: str) -> None:
+        """Download one checkpoint at the pinned revision and point the Router at that snapshot.
+
+        The Router would otherwise download from the repo's main branch. Only this checkpoint's
+        files are fetched; a snapshot already in the Hugging Face cache is reused.
+        """
+        if checkpoint in self._fetched:
+            return
+        from huggingface_hub import snapshot_download
+
+        sub = SUBFOLDERS[checkpoint]
+        prefix = sub + "/" if sub else ""
+        path = snapshot_download(
+            LAYA_REPO,
+            revision=self.revision,
+            allow_patterns=[prefix + name for name in CHECKPOINT_FILES],
+            token=os.environ.get("HF_TOKEN") or None,
+        )
+        self._router_locked().models[checkpoint] = (path, sub)
+        self._fetched.add(checkpoint)
 
     def agent(self, checkpoint: str) -> Any:
         """The loaded agent for a checkpoint, or None. Never triggers a load."""
@@ -95,6 +132,7 @@ class LayaEngine:
             try:
                 router = self._router_locked()
                 for name in self.preload:
+                    self._fetch_locked(name)
                     router.preload([name])
                     router.predict(
                         "Warm-up request.",
@@ -132,6 +170,11 @@ class LayaEngine:
         model_name = self.default_model if model is None else validate_model(model)
         with self._lock:
             router = self._router_locked()
+            target = model_name
+            if model_name == "auto":
+                # Routing is pure Python and takes well under a millisecond.
+                target = router.route(request.state, request.questions)["model"]
+            self._fetch_locked(target)
             started = time.perf_counter()
             try:
                 result = router.predict(
@@ -228,6 +271,7 @@ class LayaEngine:
             "preload": list(self.preload),
             "loaded_checkpoints": devices,
             "requested_device": self.device or "auto",
+            "revision": self.revision,
             "warm_up_seconds": round(self._warm_seconds, 1) if self._warm_seconds is not None else None,
             "last_error": self._warm_error,
         }
