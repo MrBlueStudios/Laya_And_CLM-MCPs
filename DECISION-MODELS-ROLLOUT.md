@@ -19,7 +19,7 @@ Tick boxes as you go (`- [x]`). Each project's findings go into a `docs/decision
 ## Phase 0: set up once
 
 - [ ] Clone this repo to `~/Projects/Laya_And_CLM-MCPs` on the machine where you run Claude Code
-      (as a submodule of the `Projects` repo; see `docs/projects-repo-prompt.md`), then run
+      (as a submodule of the `Projects` repo), then run
       `./register-decision-mcps.sh`. Re-run it whenever the folder moves: the registration
       stores absolute paths. It registers both servers at **user scope**, so they work in
       every project, not only here. Check with `claude mcp list` from any other directory.

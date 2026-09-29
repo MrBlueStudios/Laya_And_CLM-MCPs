@@ -10,7 +10,6 @@ text generation.
 | [`clm-mcp-server/`](clm-mcp-server/README.md) | `evaluate_clm_decision`, `rank_clm_candidates`: CLM-8B (Contrastive-LM). Ranks up to 1,000 candidates; needs a `clm-serve` backend. |
 | [`DECISION-MODELS-PLAYBOOK.md`](DECISION-MODELS-PLAYBOOK.md) | How the models work, how they compare, and how to use them with RAG, scraping, trading and chatbots. |
 | [`DECISION-MODELS-ROLLOUT.md`](DECISION-MODELS-ROLLOUT.md) | Rollout plan and per-project research checklist. |
-| [`docs/projects-repo-prompt.md`](docs/projects-repo-prompt.md) | Claude Code prompt that builds the `Projects` repo, with this repo as a submodule. |
 
 ## Setup
 
