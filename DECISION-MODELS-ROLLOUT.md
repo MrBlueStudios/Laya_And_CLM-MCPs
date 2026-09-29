@@ -18,8 +18,10 @@ Tick boxes as you go (`- [x]`). Each project's findings go into a `docs/decision
 
 ## Phase 0: set up once
 
-- [ ] Clone this repo on the machine where you run Claude Code, then run
-      `./register-decision-mcps.sh`. It registers both servers at **user scope**, so they work in
+- [ ] Clone this repo to `~/Projects/Laya_And_CLM-MCPs` on the machine where you run Claude Code
+      (as a submodule of the `Projects` repo), then run
+      `./register-decision-mcps.sh`. Re-run it whenever the folder moves: the registration
+      stores absolute paths. It registers both servers at **user scope**, so they work in
       every project, not only here. Check with `claude mcp list` from any other directory.
 - [ ] Download Laya's model once:
       `uv run --project laya-mcp-server --frozen laya-decision-mcp --prefetch` (~0.8 GB).
@@ -50,8 +52,9 @@ Tick boxes as you go (`- [x]`). Each project's findings go into a `docs/decision
 ````text
 Research how the Laya and CLM decision models (MCP tools evaluate_laya_decision,
 evaluate_clm_decision, rank_clm_candidates) can help THIS project. Background:
-~/Projects/DECISION-MODELS-PLAYBOOK.md (section 8 has a first guess for this project) and the
-READMEs of ~/Projects/laya-mcp-server and ~/Projects/clm-mcp-server.
+~/Projects/Laya_And_CLM-MCPs/DECISION-MODELS-PLAYBOOK.md (section 8 has a first guess for
+this project) and the READMEs of ~/Projects/Laya_And_CLM-MCPs/laya-mcp-server and
+~/Projects/Laya_And_CLM-MCPs/clm-mcp-server.
 
 Starting points for this project: <paste the "decisions to test" cell from the rollout table>
 
